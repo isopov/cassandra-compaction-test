@@ -8,11 +8,15 @@ import com.datastax.oss.driver.api.core.cql.Row;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
 import com.datastax.oss.driver.api.core.cql.TraceEvent;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -28,7 +32,9 @@ import java.util.regex.Pattern;
  *     <li>bloom - "Bloom filter allows skipping sstable X": skipped without any disk access</li>
  * </ul>
  * and, as a cross-check, "Merged data from memtables and N sstables" of SinglePartitionReadCommand.
+ * The node that read the sstables is printed as well, with replication factor above 1 it may be not the one we connected to.
  * Arguments: [number of partitions to query, default 20] [verbose: print all trace events, default false]
+ * [contact point: address of a node of the cluster to connect to, default 127.0.0.1]
  */
 public class SSTablesPerReadReporter {
 
@@ -40,9 +46,10 @@ public class SSTablesPerReadReporter {
     public static void main(String[] args) {
         int keysCount = args.length > 0 ? Integer.parseInt(args[0]) : 20;
         boolean verbose = args.length > 1 && Boolean.parseBoolean(args[1]);
+        String contactPoint = args.length > 2 ? args[2] : "127.0.0.1";
 
         try (CqlSession session = CqlSession.builder()
-                .addContactPoint(new InetSocketAddress("127.0.0.1", 9042))
+                .addContactPoint(new InetSocketAddress(contactPoint, 9042))
                 .withLocalDatacenter("datacenter1")
                 .build()) {
 
@@ -62,6 +69,7 @@ public class SSTablesPerReadReporter {
                 List<TraceEvent> events = info.getQueryTrace().getEvents();
 
                 int read = 0, index = 0, bloom = 0, merged = -1;
+                Set<InetAddress> readers = new TreeSet<>(Comparator.comparing(InetAddress::getHostAddress));
                 for (TraceEvent event : events) {
                     String activity = event.getActivity();
                     if (activity == null) {
@@ -69,6 +77,7 @@ public class SSTablesPerReadReporter {
                     }
                     if (READ.matcher(activity).find()) {
                         read++;
+                        readers.add(event.getSourceAddress().getAddress());
                     } else if (INDEX.matcher(activity).find()) {
                         index++;
                     } else if (BLOOM.matcher(activity).find()) {
@@ -83,8 +92,8 @@ public class SSTablesPerReadReporter {
                 readHistogram.merge(read, 1, Integer::sum);
                 touchedHistogram.merge(read + index, 1, Integer::sum);
 
-                System.out.printf("%s rows=%d sstables read=%d (merged=%d) index-only=%d bloom-skipped=%d trace=%s%n",
-                        key, rows, read, merged, index, bloom, info.getTracingId());
+                System.out.printf("%s rows=%d sstables read=%d (merged=%d) index-only=%d bloom-skipped=%d read on=%s trace=%s%n",
+                        key, rows, read, merged, index, bloom, readers, info.getTracingId());
                 if (verbose) {
                     for (TraceEvent event : events) {
                         System.out.println("    " + event.getActivity());

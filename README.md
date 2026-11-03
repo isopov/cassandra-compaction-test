@@ -107,8 +107,8 @@ by one by the partition key only (`SELECT * FROM mydb.users WHERE id = ?`) with 
 of them the number of rows, how many sstables were read (the partition was found there; Cassandra's own
 `Merged data from memtables and N sstables` trace event is printed next to it as a cross-check), how many were only
 looked up in the partition index (bloom filter false positive) and how many were skipped by the bloom filter, then
-prints histograms. Arguments are the number of partitions (default 20) and whether to print all trace events
-(default false):
+prints histograms. Arguments are the number of partitions (default 20), whether to print all trace events
+(default false) and the address of a node to connect to (default `127.0.0.1`, see step 8):
 ```
 ./mvnw compile exec:java -Dexec.mainClass=com.github.isopov.cassandra.compaction.test.SSTablesPerReadReporter -Dexec.args="200 false"
 ```
@@ -140,9 +140,84 @@ Now every read by partition key touches exactly 1 sstable.
 To repeat the test from the uncompacted state, go back to step 4: it drops the keyspace and the original 146 sstables
 are imported again from `dummysstables` (they were copied, not moved, by `--copy-data`).
 
+## 8. Load the compacted table into a 3 node cluster with replication factor 2
+
+The `compaction` cluster keeps running, a second cluster `rf2` is created next to it.
+
+Take a snapshot of the compacted table on the `compaction` cluster (it must be the current ccm cluster, `ccm list`
+marks it with `*`) and copy its sstable into a directory named `<keyspace>/<table>`, as `sstableloader` requires
+(`upload` is git-ignored):
+```
+ccm switch compaction
+ccm node1 nodetool -- snapshot -t upload mydb
+rm -rf upload && mkdir -p upload/mydb/users
+cp ~/.ccm/compaction/node1/data0/mydb/users-*/snapshots/upload/nb-* upload/mydb/users/
+```
+
+Create the `rf2` cluster (this also makes it the current ccm cluster). Its nodes can't be created with
+`ccm create -n 3`: ccm gives every cluster the same JMX ports (node1 - 7100, ...), and in Cassandra 4.1 JMX listens
+on `localhost`, so they would clash with the running `compaction` node. Instead the nodes are added one by one with
+their own addresses `127.0.2.x` (not `127.0.1.x`, `127.0.1.1` is the hostname address on Ubuntu), their own JMX ports,
+the remote debug port disabled (`ccm add` gives port 2000 to every node otherwise) and balanced tokens, so that
+every node owns exactly a third of the ring:
+```
+ccm create rf2 -v 4.1.11
+ccm add node1 -i 127.0.2.1 -j 7500 -r 0 --token=-9223372036854775808 -s
+ccm add node2 -i 127.0.2.2 -j 7600 -r 0 --token=-3074457345618258603
+ccm add node3 -i 127.0.2.3 -j 7700 -r 0 --token=3074457345618258602
+ccm start
+ccm status
+```
+
+Create the same table with replication factor 2 (and autocompaction disabled, to see the sstables as they were
+streamed):
+```
+cqlsh 127.0.2.1 -e "
+CREATE KEYSPACE mydb WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 2};
+CREATE TABLE mydb.users (id uuid, row_id uuid, name text, PRIMARY KEY (id, row_id))
+    WITH compaction = {'class': 'SizeTieredCompactionStrategy', 'enabled': 'false'};"
+```
+
+Upload the sstable with `sstableloader` of the `rf2` cluster. `ccm bulkload` runs it against a live node of the
+current cluster. It is synchronous and prints nothing when it succeeds (ccm captures the loader output), the
+directory path must be absolute:
+```
+ccm bulkload "$PWD/upload/mydb/users"
+```
+
+Check the cluster. `nodetool status mydb` should show every node `UN` with `Owns (effective)` 66.7%; its `Load`
+column is updated by gossip about once a minute, so right after the upload it may still show only a few KiB:
+```
+ccm node1 nodetool status mydb
+```
+
+Each node should have 1 sstable with about 2/3 of the data: about 6 700 of the 10 000 partitions and about 85 MB of
+the 126 MB:
+```
+for n in node1 node2 node3; do ccm $n nodetool tablestats mydb.users | grep -E 'SSTable count|Space used \(live\)|Number of partitions'; done
+```
+
+All 1 000 000 rows should be readable with all replicas answering:
+```
+cqlsh 127.0.2.1 -e "CONSISTENCY ALL; SELECT count(*) FROM mydb.users;"
+```
+
+Run the reporter against the `rf2` cluster:
+```
+./mvnw compile exec:java -Dexec.mainClass=com.github.isopov.cassandra.compaction.test.SSTablesPerReadReporter -Dexec.args="200 false 127.0.2.1"
+```
+
+Every read touches exactly 1 sstable. `read on=` shows the replica that served the read. `SELECT DISTINCT id ...
+LIMIT` returns partitions in token order, so the first 200 partitions all fall into the first token range, which is
+replicated to `127.0.2.2` and `127.0.2.3`.
+
+ccm commands like `ccm node1 ...` work on the current cluster, use `ccm switch compaction` / `ccm switch rf2` to go
+back and forth.
+
 ## Cleanup
 
 ```
-ccm stop               # stop the node, data is kept
+ccm stop               # stop the nodes of the current cluster, data is kept
 ccm remove compaction  # stop and delete the cluster with all its data
+ccm remove rf2
 ```
