@@ -144,12 +144,17 @@ are imported again from `dummysstables` (they were copied, not moved, by `--copy
 
 The `compaction` cluster keeps running, a second cluster `rf2` is created next to it.
 
-Take a snapshot of the compacted table on the `compaction` cluster (it must be the current ccm cluster, `ccm list`
-marks it with `*`) and copy its sstable into a directory named `<keyspace>/<table>`, as `sstableloader` requires
-(`upload` is git-ignored):
+Take a snapshot of only the table under test, `mydb.users`, on the `compaction` cluster (it must be the current ccm
+cluster, `ccm list` marks it with `*`). `-kt keyspace.table` limits the snapshot to this one table, other tables of
+`mydb` (if any) are not included and can be written to or loaded meanwhile. A snapshot with an existing tag can't be
+taken again (nodetool fails), so a previous `upload` snapshot is cleared first. `clearsnapshot` can't be limited to a
+table, it removes the `upload` snapshots of all tables of `mydb`, so use a tag that is not used for anything else. Then copy the snapshot's sstable into a
+directory named `<keyspace>/<table>`, as `sstableloader` requires, so only this table is uploaded (`upload` is
+git-ignored):
 ```
 ccm switch compaction
-ccm node1 nodetool -- snapshot -t upload mydb
+ccm node1 nodetool -- clearsnapshot -t upload mydb
+ccm node1 nodetool -- snapshot -t upload -kt mydb.users
 rm -rf upload && mkdir -p upload/mydb/users
 cp ~/.ccm/compaction/node1/data0/mydb/users-*/snapshots/upload/nb-* upload/mydb/users/
 ```
