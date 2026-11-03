@@ -5,6 +5,8 @@ target/
 !**/src/test/**/target/
 
 dummysstables
+.venv
+cassandra-ccm
 
 ### STS ###
 .apt_generated

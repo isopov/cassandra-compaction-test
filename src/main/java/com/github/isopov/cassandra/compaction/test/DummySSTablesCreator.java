@@ -9,7 +9,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class DummySSTablesCreator {
-    static void main() throws IOException {
+    public static void main(String[] args) throws IOException {
 
         String schema = "CREATE TABLE IF NOT EXISTS mydb.users (id uuid, name text, PRIMARY KEY (id));";
 
