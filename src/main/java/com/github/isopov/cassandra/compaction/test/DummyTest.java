@@ -9,8 +9,7 @@ import java.util.UUID;
 public class DummyTest {
     static void main() throws IOException {
 
-        String schema = "CREATE KEYSPACE IF NOT EXISTS mydb WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1}; " +
-                "CREATE TABLE IF NOT EXISTS mydb.users (id uuid, name text, PRIMARY KEY (id));";
+        String schema = "CREATE TABLE IF NOT EXISTS mydb.users (id uuid, name text, PRIMARY KEY (id));";
 
         String insertStmt = "INSERT INTO mydb.users (id, name) VALUES (?, ?);";
 
