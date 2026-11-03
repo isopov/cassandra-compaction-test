@@ -113,6 +113,33 @@ prints histograms. Arguments are the number of partitions (default 20) and wheth
 ./mvnw compile exec:java -Dexec.mainClass=com.github.isopov.cassandra.compaction.test.SSTablesPerReadReporter -Dexec.args="200 false"
 ```
 
+With 146 sstables and 100 rows per partition a read by partition key touches about 70 sstables (56-88 in a run of
+200 partitions).
+
+## 7. Compact all sstables into one and count again
+
+A major compaction merges all sstables of the table into one. It works even with autocompaction disabled, and
+`nodetool compact` is synchronous: it returns only when the compaction has finished (a few seconds here):
+```
+ccm node1 nodetool compact mydb users
+```
+
+Check that nothing is pending and `SSTable count` is 1:
+```
+ccm node1 nodetool compactionstats
+ccm node1 nodetool tablestats mydb.users
+```
+
+Rerun the reporter from step 6:
+```
+./mvnw compile exec:java -Dexec.mainClass=com.github.isopov.cassandra.compaction.test.SSTablesPerReadReporter -Dexec.args="200 false"
+```
+
+Now every read by partition key touches exactly 1 sstable.
+
+To repeat the test from the uncompacted state, go back to step 4: it drops the keyspace and the original 146 sstables
+are imported again from `dummysstables` (they were copied, not moved, by `--copy-data`).
+
 ## Cleanup
 
 ```
