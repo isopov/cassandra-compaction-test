@@ -9,10 +9,15 @@ Prerequisites:
 
 ## 1. Create sstables
 
-To create a local folder `dummysstables` with 139 1mb sstables of the `mydb.users` table run this
+To create a local folder `dummysstables` with sstables of the `mydb.users` table run this
 ```
 ./mvnw clean compile exec:java -Dexec.mainClass=com.github.isopov.cassandra.compaction.test.DummySSTablesCreator
 ```
+
+The table has a composite primary key `(id, row_id)` with partition key `id`. The creator generates 10 000 random
+partition keys and writes 1 000 000 rows with a random partition key each, so on average a partition has 100 rows,
+spread over many sstables. With 1 MiB per sstable this gives 146 sstables (156 MB in total), the numbers can be
+changed in `PARTITIONS` and `ROWS_PER_PARTITION`.
 
 `exec:java` does not compile anything by itself, so always keep `compile` in the command, otherwise a stale class is run.
 
@@ -59,11 +64,13 @@ The node listens on `127.0.0.1:9042`. `ccm create` also makes `compaction` the c
 ## 4. Create the table with autocompaction disabled
 
 The schema must be the same as in `DummySSTablesCreator`. `'enabled': 'false'` in the compaction options disables
-autocompaction for the table persistently (it survives node restarts):
+autocompaction for the table persistently (it survives node restarts). `DROP KEYSPACE` removes the data of a previous
+run, if any:
 ```
 cqlsh 127.0.0.1 -e "
+DROP KEYSPACE IF EXISTS mydb;
 CREATE KEYSPACE mydb WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
-CREATE TABLE mydb.users (id uuid, name text, PRIMARY KEY (id))
+CREATE TABLE mydb.users (id uuid, row_id uuid, name text, PRIMARY KEY (id, row_id))
     WITH compaction = {'class': 'SizeTieredCompactionStrategy', 'enabled': 'false'};"
 ```
 
@@ -87,7 +94,7 @@ sstable one by one (this keeps the number of sstables, it is not a compaction):
 ccm node1 nodetool upgradesstables -- -a mydb users
 ```
 
-Check the result, `SSTable count` should be 139:
+Check the result, `SSTable count` should be the same as the number of `*-Data.db` files in `dummysstables`:
 ```
 ccm node1 nodetool tablestats mydb.users
 ccm node1 nodetool compactionstats
@@ -95,10 +102,13 @@ ccm node1 nodetool compactionstats
 
 ## 6. Count sstables read per query
 
-`SSTablesPerReadReporter` takes some keys from `mydb.users`, reads them one by one with query tracing on and reports
-for each of them how many sstables were read (the partition was found there), how many were only looked up in the
-partition index (bloom filter false positive) and how many were skipped by the bloom filter, then prints histograms.
-Arguments are the number of keys (default 20) and whether to print all trace events (default false):
+`SSTablesPerReadReporter` takes some partition keys from `mydb.users` (`SELECT DISTINCT id`), reads the partitions one
+by one by the partition key only (`SELECT * FROM mydb.users WHERE id = ?`) with query tracing on and reports for each
+of them the number of rows, how many sstables were read (the partition was found there; Cassandra's own
+`Merged data from memtables and N sstables` trace event is printed next to it as a cross-check), how many were only
+looked up in the partition index (bloom filter false positive) and how many were skipped by the bloom filter, then
+prints histograms. Arguments are the number of partitions (default 20) and whether to print all trace events
+(default false):
 ```
 ./mvnw compile exec:java -Dexec.mainClass=com.github.isopov.cassandra.compaction.test.SSTablesPerReadReporter -Dexec.args="200 false"
 ```

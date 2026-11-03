@@ -9,11 +9,20 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class DummySSTablesCreator {
+
+    private static final int PARTITIONS = 10_000;
+    private static final int ROWS_PER_PARTITION = 100;
+
     public static void main(String[] args) throws IOException {
 
-        String schema = "CREATE TABLE IF NOT EXISTS mydb.users (id uuid, name text, PRIMARY KEY (id));";
+        String schema = "CREATE TABLE IF NOT EXISTS mydb.users (id uuid, row_id uuid, name text, PRIMARY KEY (id, row_id));";
 
-        String insertStmt = "INSERT INTO mydb.users (id, name) VALUES (?, ?);";
+        String insertStmt = "INSERT INTO mydb.users (id, row_id, name) VALUES (?, ?, ?);";
+
+        UUID[] partitionKeys = new UUID[PARTITIONS];
+        for (int i = 0; i < partitionKeys.length; i++) {
+            partitionKeys[i] = UUID.randomUUID();
+        }
 
         File outputDir = new File("dummysstables");
         outputDir.createDirectoriesIfNotExists();
@@ -26,8 +35,11 @@ public class DummySSTablesCreator {
                 .using(insertStmt)
                 .build();
 
-        for (int i = 0; i < 1_000_000; i++) {
-            writer.addRow(UUID.randomUUID(), randomString(100));
+        // every row goes to a random partition, so on average each partition gets ROWS_PER_PARTITION rows
+        // spread over several sstables
+        for (int i = 0; i < PARTITIONS * ROWS_PER_PARTITION; i++) {
+            UUID partitionKey = partitionKeys[ThreadLocalRandom.current().nextInt(partitionKeys.length)];
+            writer.addRow(partitionKey, UUID.randomUUID(), randomString(100));
         }
 
         writer.close();
