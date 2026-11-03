@@ -8,5 +8,6 @@ dummysstables
 .venv
 cassandra-ccm
 upload
+compactedsstables
 
 .idea

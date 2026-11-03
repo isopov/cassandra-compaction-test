@@ -219,6 +219,28 @@ replicated to `127.0.2.2` and `127.0.2.3`.
 ccm commands like `ccm node1 ...` work on the current cluster, use `ccm switch compaction` / `ccm switch rf2` to go
 back and forth.
 
+## 9. Compact the sstables offline, without a Cassandra node
+
+`OfflineSSTablesCompactor` does the same major compaction as step 7 in a plain local java process: it opens the
+sstables from `dummysstables` with `cassandra-all`, merges their partitions in token order (rows of a partition from
+different sstables are merged together) and writes one sstable into `compactedsstables/mydb/users` (git-ignored).
+Unlike `CQLSSTableWriter` it writes a proper bloom filter, so `upgradesstables` is not needed. Tombstones are kept as
+they are, nothing is purged. Arguments are the input directory (default `dummysstables`) and the output directory
+(default `compactedsstables/mydb/users`, it must be empty):
+```
+rm -rf compactedsstables
+./mvnw compile exec:java -Dexec.mainClass=com.github.isopov.cassandra.compaction.test.OfflineSSTablesCompactor
+```
+
+For the 146 sstables it takes about 10 seconds and writes a 127 MB sstable with all 10 000 partitions. The result
+can be used instead of steps 5-7 (import it in step 5 with `"$PWD/compactedsstables/mydb/users"` instead of
+`"$PWD/dummysstables"` and skip `upgradesstables`): `SSTable count` is 1, `count(*)` is 1 000 000 and the reporter
+shows 1 sstable read per query. Its directory is named `<keyspace>/<table>`, so it can also be loaded into the `rf2`
+cluster of step 8 directly instead of the snapshot:
+```
+ccm bulkload "$PWD/compactedsstables/mydb/users"
+```
+
 ## Cleanup
 
 ```

@@ -13,9 +13,11 @@ public class DummySSTablesCreator {
     private static final int PARTITIONS = 10_000;
     private static final int ROWS_PER_PARTITION = 100;
 
+    static final String SCHEMA = "CREATE TABLE IF NOT EXISTS mydb.users (id uuid, row_id uuid, name text, PRIMARY KEY (id, row_id));";
+
     public static void main(String[] args) throws IOException {
 
-        String schema = "CREATE TABLE IF NOT EXISTS mydb.users (id uuid, row_id uuid, name text, PRIMARY KEY (id, row_id));";
+        String schema = SCHEMA;
 
         String insertStmt = "INSERT INTO mydb.users (id, row_id, name) VALUES (?, ?, ?);";
 
